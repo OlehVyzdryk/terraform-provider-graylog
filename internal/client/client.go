@@ -2365,6 +2365,38 @@ type EventDefinition struct {
 	// Graylog 5 requires additional fields
 	KeySpec              []string               `json:"key_spec,omitempty"`
 	NotificationSettings map[string]interface{} `json:"notification_settings,omitempty"`
+	// Custom event field definitions (field name -> {data_type, providers})
+	FieldSpec map[string]interface{} `json:"field_spec,omitempty"`
+	// The API represents notification links as objects; used for parsing responses.
+	Notifications []map[string]interface{} `json:"notifications,omitempty"`
+}
+
+// eventDefinitionRequestBody builds the request payload shared by all API
+// versions. The API expects notification links as a "notifications" array of
+// {notification_id} objects; a "notification_ids" property is rejected by
+// Graylog 7 ("Unable to map property notification_ids").
+func (c *Client) eventDefinitionRequestBody(ed *EventDefinition) map[string]any {
+	notifs := make([]any, 0, len(ed.NotificationIDs))
+	for _, id := range ed.NotificationIDs {
+		notifs = append(notifs, map[string]any{"notification_id": id})
+	}
+	body := map[string]any{
+		"title":                 ed.Title,
+		"description":           ed.Description,
+		"priority":              ed.Priority,
+		"alert":                 ed.Alert,
+		"config":                ed.Config,
+		"notifications":         notifs,
+		"notification_settings": ed.NotificationSettings,
+		"key_spec":              ed.KeySpec,
+	}
+	if ed.FieldSpec != nil {
+		body["field_spec"] = ed.FieldSpec
+	}
+	if ed.ID != "" {
+		body["id"] = ed.ID
+	}
+	return body
 }
 
 func (c *Client) CreateEventDefinition(ed *EventDefinition) (*EventDefinition, error) {
@@ -2380,22 +2412,9 @@ func (c *Client) CreateEventDefinition(ed *EventDefinition) (*EventDefinition, e
 			"backlog_size":    0,
 		}
 	}
-	// Сформируем базовый payload для запроса с учётом особенностей v5
-	var baseBody any = ed
-	if c.APIVersion == APIV5 {
-		// GL5 expects snake_case fields key_spec/notification_settings
-		baseBody = map[string]any{
-			"title":       ed.Title,
-			"description": ed.Description,
-			"priority":    ed.Priority,
-			"alert":       ed.Alert,
-			"config":      ed.Config,
-			// GL5 uses "notifications" objects; omit unknown notification_ids
-			"notifications":         []any{},
-			"notification_settings": ed.NotificationSettings,
-			"key_spec":              ed.KeySpec,
-		}
-	}
+	// Build one request body shape for every version: the "notifications"
+	// array form is accepted by 5.x/6.x and required by 7.x.
+	baseBody := c.eventDefinitionRequestBody(ed)
 
 	// Для устойчивости: пробуем оба варианта тела запроса вне зависимости от детекции версии,
 	// меняя порядок приоритетов в зависимости от предположения о версии.
@@ -2432,6 +2451,15 @@ func (c *Client) GetEventDefinition(id string) (*EventDefinition, error) {
 	}
 	var out EventDefinition
 	_ = json.Unmarshal(resp, &out)
+	// The API returns notification links as a "notifications" array of
+	// {notification_id} objects; surface them as plain ids.
+	if len(out.NotificationIDs) == 0 {
+		for _, n := range out.Notifications {
+			if nid, ok := n["notification_id"].(string); ok && nid != "" {
+				out.NotificationIDs = append(out.NotificationIDs, nid)
+			}
+		}
+	}
 	return &out, nil
 }
 
@@ -2447,20 +2475,10 @@ func (c *Client) UpdateEventDefinition(id string, ed *EventDefinition) (*EventDe
 			"backlog_size":    0,
 		}
 	}
-	var body any = ed
-	if c.APIVersion == APIV5 {
-		req := map[string]any{
-			"title":                 ed.Title,
-			"description":           ed.Description,
-			"priority":              ed.Priority,
-			"alert":                 ed.Alert,
-			"config":                ed.Config,
-			"notifications":         []any{},
-			"notification_settings": ed.NotificationSettings,
-			"key_spec":              ed.KeySpec,
-		}
-		body = req
+	if ed.ID == "" {
+		ed.ID = id
 	}
+	body := c.eventDefinitionRequestBody(ed)
 	resp, err := c.doRequest("PUT", path, body)
 	if err != nil {
 		return nil, err
