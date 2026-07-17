@@ -2501,12 +2501,15 @@ func (c *Client) CreateEventNotification(n *EventNotification) (*EventNotificati
 		for k, v := range n.Config {
 			cfg[k] = v
 		}
-		// Для email-уведомлений в v7 требуется явный тип конфигурации
-		if n.Type == "email" {
-			if _, ok := cfg["type"]; !ok {
-				// На разных сборках встречаются значения вида "email-notification-v1" или "org.graylog.events.notifications.types.EmailEventNotificationConfig"
-				// Попробуем более короткий вариант, а при ошибке сервер вернёт конкретный ожидаемый тип
+		// v7 requires the config JSON to carry its own type discriminator.
+		// For the legacy short "email" value map it to the full type name;
+		// otherwise reuse the resource-level type as-is (e.g. "http-notification-v1").
+		if _, ok := cfg["type"]; !ok {
+			switch {
+			case n.Type == "email":
 				cfg["type"] = "email-notification-v1"
+			case n.Type != "":
+				cfg["type"] = n.Type
 			}
 		}
 		entity := map[string]any{
@@ -2592,6 +2595,20 @@ func (c *Client) UpdateEventNotification(id string, n *EventNotification) (*Even
 	path := fmt.Sprintf("/events/notifications/%s", id)
 	if c.APIVersion == APIV6 || c.APIVersion == APIV7 {
 		path = fmt.Sprintf("/api/events/notifications/%s", id)
+	}
+	// Same config type discriminator requirement as on create.
+	if n.Config != nil {
+		if _, ok := n.Config["type"]; !ok {
+			switch {
+			case n.Type == "email":
+				n.Config["type"] = "email-notification-v1"
+			case n.Type != "":
+				n.Config["type"] = n.Type
+			}
+		}
+	}
+	if n.ID == "" {
+		n.ID = id
 	}
 	resp, err := c.doRequest("PUT", path, n)
 	if err != nil {
