@@ -306,8 +306,42 @@ func (c *Client) detectVersion() {
 		}
 	}
 
-	// Если по заголовку определить не удалось — оставляем безопасный дефолт APIV5 без эвристик,
-	// чтобы не ошибочно классифицировать 5.x как 7.x.
+	// Fallback: Graylog 7.x no longer sends the X-Graylog-Version header.
+	// Parse the version from the /api/system JSON body instead.
+	if !headerDetected {
+		for _, base := range bases {
+			for _, p := range tryPaths {
+				req, err := http.NewRequest("GET", base+p, nil)
+				if err != nil {
+					continue
+				}
+				req.Header.Set("Accept", "application/json")
+				req.Header.Set("X-Requested-By", "terraform-provider")
+				c.setAuthHeader(req)
+				resp, err := c.HTTP.Do(req)
+				if err != nil {
+					continue
+				}
+				var sys struct {
+					Version string `json:"version"`
+				}
+				decodeErr := json.NewDecoder(resp.Body).Decode(&sys)
+				resp.Body.Close()
+				if resp.StatusCode != 200 || decodeErr != nil || sys.Version == "" {
+					continue
+				}
+				switch {
+				case strings.HasPrefix(sys.Version, "7."):
+					c.APIVersion = APIV7
+				case strings.HasPrefix(sys.Version, "6."):
+					c.APIVersion = APIV6
+				default:
+					c.APIVersion = APIV5
+				}
+				return
+			}
+		}
+	}
 }
 
 // shouldRetry determines if a request should be retried based on status code
