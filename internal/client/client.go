@@ -2072,6 +2072,88 @@ func (c *Client) DeletePipeline(id string) error {
 	return err
 }
 
+// ---- Pipeline Rules ----
+
+type PipelineRule struct {
+	ID          string `json:"id,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Source      string `json:"source"`
+}
+
+func (c *Client) CreatePipelineRule(r *PipelineRule) (*PipelineRule, error) {
+	path := "/api/system/pipelines/rule"
+	resp, err := c.doRequest("POST", path, r)
+	if err != nil {
+		return nil, err
+	}
+	var out PipelineRule
+	_ = json.Unmarshal(resp, &out)
+	return &out, nil
+}
+
+func (c *Client) GetPipelineRule(id string) (*PipelineRule, error) {
+	path := fmt.Sprintf("/api/system/pipelines/rule/%s", id)
+	resp, err := c.doRequest("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out PipelineRule
+	_ = json.Unmarshal(resp, &out)
+	return &out, nil
+}
+
+func (c *Client) UpdatePipelineRule(id string, r *PipelineRule) (*PipelineRule, error) {
+	path := fmt.Sprintf("/api/system/pipelines/rule/%s", id)
+	resp, err := c.doRequest("PUT", path, r)
+	if err != nil {
+		return nil, err
+	}
+	var out PipelineRule
+	_ = json.Unmarshal(resp, &out)
+	return &out, nil
+}
+
+func (c *Client) DeletePipelineRule(id string) error {
+	path := fmt.Sprintf("/api/system/pipelines/rule/%s", id)
+	_, err := c.doRequest("DELETE", path, nil)
+	return err
+}
+
+// ---- Pipeline Connections ----
+
+type PipelineConnection struct {
+	StreamID    string   `json:"stream_id"`
+	PipelineIDs []string `json:"pipeline_ids"`
+}
+
+func (c *Client) GetPipelineConnection(streamID string) (*PipelineConnection, error) {
+	path := fmt.Sprintf("/api/system/pipelines/connections/%s", streamID)
+	resp, err := c.doRequest("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out PipelineConnection
+	_ = json.Unmarshal(resp, &out)
+	return &out, nil
+}
+
+// SetPipelineConnection replaces the full set of pipelines connected to a
+// stream. Passing an empty PipelineIDs list disconnects all pipelines.
+func (c *Client) SetPipelineConnection(conn *PipelineConnection) (*PipelineConnection, error) {
+	path := "/api/system/pipelines/connections/to_stream"
+	if conn.PipelineIDs == nil {
+		conn.PipelineIDs = []string{}
+	}
+	resp, err := c.doRequest("POST", path, conn)
+	if err != nil {
+		return nil, err
+	}
+	var out PipelineConnection
+	_ = json.Unmarshal(resp, &out)
+	return &out, nil
+}
+
 // ---- Dashboards ----
 
 type Dashboard struct {
