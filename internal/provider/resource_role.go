@@ -95,12 +95,38 @@ func (r *roleResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	data.Name = types.StringValue(ro.Name)
 	data.Description = types.StringValue(ro.Description)
 	data.ReadOnly = types.BoolValue(ro.ReadOnly)
-	perms := make([]types.String, 0, len(ro.Permissions))
-	for _, p := range ro.Permissions {
-		perms = append(perms, types.StringValue(p))
+	// Graylog stores permissions as a set and returns it in arbitrary order;
+	// keep the prior state ordering when the sets are equal to avoid phantom
+	// reorder diffs on every plan.
+	if !samePermissionSet(data.Permissions, ro.Permissions) {
+		perms := make([]types.String, 0, len(ro.Permissions))
+		for _, p := range ro.Permissions {
+			perms = append(perms, types.StringValue(p))
+		}
+		data.Permissions = perms
 	}
-	data.Permissions = perms
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// samePermissionSet reports whether the state permission list and the API
+// permission list contain the same elements (order-insensitive, multiset).
+func samePermissionSet(state []types.String, api []string) bool {
+	if len(state) != len(api) {
+		return false
+	}
+	counts := make(map[string]int, len(api))
+	for _, p := range api {
+		counts[p]++
+	}
+	for _, s := range state {
+		counts[s.ValueString()]--
+	}
+	for _, c := range counts {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *roleResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {

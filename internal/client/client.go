@@ -1595,16 +1595,23 @@ func (c *Client) DeleteStreamRule(streamID, ruleID string) error {
 // Extractor represents a Graylog input extractor. Fields and JSON tags match
 // Graylog's REST API (POST/PUT /system/inputs/{inputId}/extractors).
 type Extractor struct {
-	ID              string                 `json:"id,omitempty"`
-	Title           string                 `json:"title"`
-	ExtractorType   string                 `json:"extractor_type"`
-	SourceField     string                 `json:"source_field"`
+	ID            string `json:"id,omitempty"`
+	Title         string `json:"title"`
+	ExtractorType string `json:"extractor_type"`
+	// Read shape only: GET returns the type under "type" while create expects
+	// "extractor_type"; ListInputExtractors normalizes Type into ExtractorType.
+	Type        string `json:"type,omitempty"`
+	SourceField string `json:"source_field"`
 	TargetField     string                 `json:"target_field,omitempty"`
 	CursorStrategy  string                 `json:"cursor_strategy,omitempty"`
 	ExtractorConfig map[string]interface{} `json:"extractor_config,omitempty"`
-	Converters      []ExtractorConverter   `json:"converters,omitempty"`
-	ConditionType   string                 `json:"condition_type,omitempty"`
-	ConditionValue  string                 `json:"condition_value,omitempty"`
+	// No omitempty: Graylog 6/7 reject an absent/null converters field
+	// ("Null converters"), an empty list must be sent explicitly.
+	Converters []ExtractorConverter `json:"converters"`
+	ConditionType string `json:"condition_type,omitempty"`
+	// No omitempty: the create endpoint validates conditionValue as non-null
+	// ("Null conditionValue") even when condition_type is "none".
+	ConditionValue string `json:"condition_value"`
 	Order           int                    `json:"order,omitempty"`
 }
 
@@ -1622,31 +1629,60 @@ func (c *Client) ListInputExtractors(inputID string) ([]Extractor, error) {
 	if err != nil {
 		return nil, err
 	}
+	// GET responses carry the extractor type under "type"; create/update use
+	// "extractor_type". Normalize so higher layers only see ExtractorType.
+	normalize := func(list []Extractor) []Extractor {
+		for i := range list {
+			if list[i].ExtractorType == "" && list[i].Type != "" {
+				list[i].ExtractorType = list[i].Type
+			}
+		}
+		return list
+	}
 	// Graylog wraps response like {"extractors": [ ... ]}
 	var wrapper struct {
 		Extractors []Extractor `json:"extractors"`
 	}
 	if err := json.Unmarshal(resp, &wrapper); err == nil && wrapper.Extractors != nil {
-		return wrapper.Extractors, nil
+		return normalize(wrapper.Extractors), nil
 	}
 	// Some versions may return an array directly (be lenient)
 	var direct []Extractor
 	if err := json.Unmarshal(resp, &direct); err == nil && direct != nil {
-		return direct, nil
+		return normalize(direct), nil
 	}
 	return nil, errors.New("unexpected extractors response format")
 }
 
 // CreateInputExtractor creates an extractor for the specified input and returns the created object.
 func (c *Client) CreateInputExtractor(inputID string, extractor *Extractor) (*Extractor, error) {
+	// A nil slice would still marshal as null; Graylog 6/7 require a list.
+	if extractor.Converters == nil {
+		extractor.Converters = []ExtractorConverter{}
+	}
+	// The create endpoint rejects null/absent enum fields; fall back to the
+	// schema defaults.
+	if extractor.ConditionType == "" {
+		extractor.ConditionType = "none"
+	}
+	if extractor.CursorStrategy == "" {
+		extractor.CursorStrategy = "copy"
+	}
 	// Унифицированный путь для всех версий
 	base := fmt.Sprintf("/api/system/inputs/%s/extractors", inputID)
 	resp, err := c.doRequest("POST", base, extractor)
 	if err != nil {
 		return nil, err
 	}
-	var out Extractor
-	_ = json.Unmarshal(resp, &out)
+	// The create response carries only {"extractor_id": "..."} — echo the
+	// request payload back with the assigned id instead of parsing the body
+	// into an (empty) Extractor.
+	var created struct {
+		ExtractorID string `json:"extractor_id"`
+	}
+	_ = json.Unmarshal(resp, &created)
+	out := *extractor
+	out.ID = created.ExtractorID
 	return &out, nil
 }
 

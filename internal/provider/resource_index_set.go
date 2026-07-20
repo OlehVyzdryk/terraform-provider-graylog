@@ -309,8 +309,14 @@ func (r *indexSetResource) Create(ctx context.Context, req resource.CreateReques
 	// on the next apply.
 	data.ID = types.StringValue(created.ID)
 
-	// Read back from API to get the complete state with all server-populated fields
+	// Read back from API to get the complete state with all server-populated fields.
+	// A GET issued right after a successful create can transiently 404 (observed
+	// on Graylog 7.1 under concurrent creates), so retry briefly on not-found.
 	is, err := r.client.WithContext(ctx).GetIndexSet(created.ID)
+	for attempt := 0; attempt < 5 && errors.Is(err, client.ErrNotFound); attempt++ {
+		time.Sleep(300 * time.Millisecond)
+		is, err = r.client.WithContext(ctx).GetIndexSet(created.ID)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading index set after create", err.Error())
 		resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
@@ -365,6 +371,21 @@ func (r *indexSetResource) Read(ctx context.Context, req resource.ReadRequest, r
 	hadRotation := data.Rotation != nil && !data.Rotation.Class.IsNull() && !data.Rotation.Class.IsUnknown()
 	hadRetention := data.Retention != nil && !data.Retention.Class.IsNull() && !data.Retention.Class.IsUnknown()
 
+	// Remember prior config keys: the API enriches strategy configs with
+	// server-side defaults, so Read must filter them the same way Create and
+	// Update do to avoid phantom diffs.
+	var priorRotationKeys, priorRetentionKeys []string
+	if hadRotation && !data.Rotation.Config.IsNull() {
+		for k := range data.Rotation.Config.Elements() {
+			priorRotationKeys = append(priorRotationKeys, k)
+		}
+	}
+	if hadRetention && !data.Retention.Config.IsNull() {
+		for k := range data.Retention.Config.Elements() {
+			priorRetentionKeys = append(priorRetentionKeys, k)
+		}
+	}
+
 	is, err := r.client.WithContext(ctx).GetIndexSet(data.ID.ValueString())
 	if err != nil {
 		if errors.Is(err, client.ErrNotFound) {
@@ -380,9 +401,13 @@ func (r *indexSetResource) Read(ctx context.Context, req resource.ReadRequest, r
 	// Don't materialize rotation/retention blocks if they weren't in prior state
 	if !hadRotation {
 		data.Rotation = nil
+	} else if len(priorRotationKeys) > 0 && data.Rotation != nil {
+		data.Rotation.Config = filterMapKeys(ctx, data.Rotation.Config, priorRotationKeys)
 	}
 	if !hadRetention {
 		data.Retention = nil
+	} else if len(priorRetentionKeys) > 0 && data.Retention != nil {
+		data.Retention.Config = filterMapKeys(ctx, data.Retention.Config, priorRetentionKeys)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

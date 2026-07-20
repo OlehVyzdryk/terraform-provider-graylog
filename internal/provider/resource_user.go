@@ -121,12 +121,19 @@ func (r *userResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	data.Username = types.StringValue(u.Username)
 	data.FullName = types.StringValue(u.FullName)
 	data.Email = types.StringValue(u.Email)
-	// roles
-	roleVals := make([]attr.Value, 0, len(u.Roles))
-	for _, rname := range u.Roles {
-		roleVals = append(roleVals, types.StringValue(rname))
+	// roles: Graylog returns them as a set in arbitrary order; keep the prior
+	// state ordering when the sets are equal to avoid phantom reorder diffs.
+	var priorRoles []string
+	if !data.Roles.IsNull() && !data.Roles.IsUnknown() {
+		_ = data.Roles.ElementsAs(ctx, &priorRoles, false)
 	}
-	data.Roles = types.ListValueMust(types.StringType, roleVals)
+	if !sameStringMultiset(priorRoles, u.Roles) {
+		roleVals := make([]attr.Value, 0, len(u.Roles))
+		for _, rname := range u.Roles {
+			roleVals = append(roleVals, types.StringValue(rname))
+		}
+		data.Roles = types.ListValueMust(types.StringType, roleVals)
+	}
 	// Optional server-defaulted attributes: only refresh them when they are
 	// tracked in state, otherwise a server default (e.g. timezone "UTC")
 	// produces a permanent diff against a null config value.
@@ -209,4 +216,25 @@ func (r *userResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 func (r *userResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// Импорт по username
 	resource.ImportStatePassthroughID(ctx, path.Root("username"), req, resp)
+}
+
+// sameStringMultiset reports whether two string slices contain the same
+// elements regardless of order (multiset comparison).
+func sameStringMultiset(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, s := range a {
+		counts[s]++
+	}
+	for _, s := range b {
+		counts[s]--
+	}
+	for _, c := range counts {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
 }
