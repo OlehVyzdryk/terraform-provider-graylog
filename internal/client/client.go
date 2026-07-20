@@ -2707,10 +2707,15 @@ func (c *Client) UpdateEventNotification(id string, n *EventNotification) (*Even
 			}
 		}
 	}
-	if n.ID == "" {
-		n.ID = id
+	// Graylog 7 rejects a top-level "type" property on update ("Unable to
+	// map property type"); the discriminator lives inside config only.
+	body := map[string]any{
+		"id":          id,
+		"title":       n.Title,
+		"description": n.Description,
+		"config":      n.Config,
 	}
-	resp, err := c.doRequest("PUT", path, n)
+	resp, err := c.doRequest("PUT", path, body)
 	if err != nil {
 		return nil, err
 	}
