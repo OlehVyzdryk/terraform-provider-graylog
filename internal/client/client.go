@@ -1418,15 +1418,21 @@ func (c *Client) ListStreamOutputs(streamID string) ([]Output, error) {
 // ===== Roles =====
 
 type Role struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Permissions []string `json:"permissions,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// No omitempty: the API requires the property to be present (a missing
+	// "permissions" fails with 'Must be of type Set'), so an empty role must
+	// still send [].
+	Permissions []string `json:"permissions"`
 	ReadOnly    bool     `json:"read_only,omitempty"`
 }
 
 func (c *Client) CreateRole(r *Role) (*Role, error) {
 	// Унифицированный путь для всех версий
 	path := "/api/roles"
+	if r.Permissions == nil {
+		r.Permissions = []string{}
+	}
 	resp, err := c.doRequest("POST", path, r)
 	if err != nil {
 		return nil, err
@@ -1454,6 +1460,9 @@ func (c *Client) GetRole(name string) (*Role, error) {
 func (c *Client) UpdateRole(name string, r *Role) (*Role, error) {
 	// Унифицированный путь для всех версий
 	path := fmt.Sprintf("/api/roles/%s", name)
+	if r.Permissions == nil {
+		r.Permissions = []string{}
+	}
 	// В разных основных версиях Graylog поведение PUT /roles/{name} отличается:
 	// - В 7.x поле name в теле должно отсутствовать (immutable)
 	// - В 6.x сервер может требовать присутствие поля name в теле
@@ -1461,9 +1470,10 @@ func (c *Client) UpdateRole(name string, r *Role) (*Role, error) {
 	// явно связанного с отсутствием поля name, повторим запрос с включённым name.
 
 	type updatePayload struct {
-		Name        string   `json:"name,omitempty"`
-		Description string   `json:"description,omitempty"`
-		Permissions []string `json:"permissions,omitempty"`
+		Name        string `json:"name,omitempty"`
+		Description string `json:"description,omitempty"`
+		// No omitempty: a missing "permissions" fails with 'Must be of type Set'
+		Permissions []string `json:"permissions"`
 		ReadOnly    bool     `json:"read_only,omitempty"`
 	}
 
@@ -2163,62 +2173,63 @@ type Dashboard struct {
 }
 
 func (c *Client) CreateDashboard(d *Dashboard) (*Dashboard, error) {
-	// Graylog 7.x использует Views API вместо legacy /dashboards
-	if c.APIVersion == APIV7 {
-		// Попробуем несколько безопасных вариантов создания дашборда через Views API
-		variants := []struct {
-			url  string
-			body map[string]any
-		}{
-			{"/api/views", map[string]any{"type": "DASHBOARD", "title": d.Title, "summary": d.Description}},
-			{"/api/views", map[string]any{"title": d.Title, "summary": d.Description, "type": "dashboard"}},
-			{"/api/views/dashboards", map[string]any{"title": d.Title, "summary": d.Description}},
+	// Graylog 6/7: dashboards are views. A DASHBOARD view needs a backing
+	// search object, and view creation is a CreateEntityRequest
+	// ({entity, share_request}) on 7.x; some 6.x builds take the plain view.
+	// The legacy /dashboards endpoints answer 405 on these versions.
+	if c.APIVersion == APIV6 || c.APIVersion == APIV7 {
+		sresp, err := c.doRequest("POST", "/api/views/search", map[string]any{"queries": []any{}})
+		if err != nil {
+			return nil, fmt.Errorf("create backing search for dashboard: %w", err)
 		}
-		for _, v := range variants {
-			if resp, err := c.doRequest("POST", v.url, v.body); err == nil {
-				var out Dashboard
-				// возможные ответы: {id,...} или {view:{id,...}}
-				var aux map[string]any
-				if json.Unmarshal(resp, &aux) == nil {
-					if id, ok := aux["id"].(string); ok && id != "" {
-						out.ID = id
-						out.Title = d.Title
-						out.Description = d.Description
-						return &out, nil
-					}
-					if view, ok := aux["view"].(map[string]any); ok {
-						if id, ok := view["id"].(string); ok && id != "" {
-							out.ID = id
-							out.Title = d.Title
-							out.Description = d.Description
-							return &out, nil
-						}
-					}
-				}
-				// попытка распаковать напрямую
-				_ = json.Unmarshal(resp, &out)
-				if out.ID != "" {
+		var search struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(sresp, &search) != nil || search.ID == "" {
+			return nil, fmt.Errorf("create backing search for dashboard: no id in response")
+		}
+		entity := map[string]any{
+			"type":        "DASHBOARD",
+			"title":       d.Title,
+			"summary":     d.Description,
+			"description": d.Description,
+			"search_id":   search.ID,
+			"state":       map[string]any{},
+			"properties":  []any{},
+		}
+		bodies := []any{
+			map[string]any{"entity": entity, "share_request": map[string]any{"selected_grantee_capabilities": map[string]any{}}},
+			entity,
+		}
+		if c.APIVersion == APIV6 {
+			bodies = []any{entity, bodies[0]}
+		}
+		var lastErr error
+		for _, body := range bodies {
+			resp, err := c.doRequest("POST", "/api/views", body)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			var out Dashboard
+			var aux map[string]any
+			if json.Unmarshal(resp, &aux) == nil {
+				if id, ok := aux["id"].(string); ok && id != "" {
+					out.ID = id
+					out.Title = d.Title
+					out.Description = d.Description
 					return &out, nil
 				}
 			}
-		}
-		// Fallback: если Views API не сработал (возможно, сервер старше), пробуем legacy пути
-		// v6: /api/dashboards, v5: /dashboards
-		for _, path := range []string{"/api/dashboards", "/dashboards"} {
-			if resp, err := c.doRequest("POST", path, d); err == nil {
-				var out Dashboard
-				if json.Unmarshal(resp, &out) == nil && out.ID != "" {
-					return &out, nil
-				}
+			_ = json.Unmarshal(resp, &out)
+			if out.ID != "" {
+				return &out, nil
 			}
 		}
-		return nil, fmt.Errorf("failed to create dashboard via Views API and legacy endpoints")
+		return nil, fmt.Errorf("failed to create dashboard via Views API: %v", lastErr)
 	}
-	// legacy путь для v5/v6
+	// legacy путь для v5
 	path := "/dashboards"
-	if c.APIVersion == APIV6 {
-		path = "/api/dashboards"
-	}
 	resp, err := c.doRequest("POST", path, d)
 	if err != nil {
 		return nil, err
@@ -2229,7 +2240,7 @@ func (c *Client) CreateDashboard(d *Dashboard) (*Dashboard, error) {
 }
 
 func (c *Client) GetDashboard(id string) (*Dashboard, error) {
-	if c.APIVersion == APIV7 {
+	if c.APIVersion == APIV6 || c.APIVersion == APIV7 {
 		// Views API
 		resp, err := c.doRequest("GET", fmt.Sprintf("/api/views/%s", id), nil)
 		if err != nil {
@@ -2278,22 +2289,36 @@ func (c *Client) GetDashboard(id string) (*Dashboard, error) {
 }
 
 func (c *Client) UpdateDashboard(id string, d *Dashboard) (*Dashboard, error) {
-	if c.APIVersion == APIV7 {
-		body := map[string]any{"title": d.Title}
-		if d.Description != "" {
-			body["summary"] = d.Description
-		}
-		if _, err := c.doRequest("PUT", fmt.Sprintf("/api/views/%s", id), body); err != nil {
+	if c.APIVersion == APIV6 || c.APIVersion == APIV7 {
+		// The views PUT replaces the whole document and (on 7.x) expects the
+		// same entity wrapper as create; fetch, patch, and put back.
+		raw, err := c.doRequest("GET", fmt.Sprintf("/api/views/%s", id), nil)
+		if err != nil {
 			return nil, err
+		}
+		var view map[string]any
+		if err := json.Unmarshal(raw, &view); err != nil {
+			return nil, err
+		}
+		view["title"] = d.Title
+		if d.Description != "" {
+			view["summary"] = d.Description
+			view["description"] = d.Description
+		}
+		for _, k := range []string{"owner", "created_at", "last_updated_at", "favorite"} {
+			delete(view, k)
+		}
+		if _, err := c.doRequest("PUT", fmt.Sprintf("/api/views/%s", id), map[string]any{"entity": view}); err != nil {
+			// Some 6.x builds accept the plain view document instead
+			if _, err2 := c.doRequest("PUT", fmt.Sprintf("/api/views/%s", id), view); err2 != nil {
+				return nil, err
+			}
 		}
 		// перечитать
 		return c.GetDashboard(id)
 	}
 	// legacy
 	path := fmt.Sprintf("/dashboards/%s", id)
-	if c.APIVersion == APIV6 {
-		path = fmt.Sprintf("/api/dashboards/%s", id)
-	}
 	resp, err := c.doRequest("PUT", path, d)
 	if err != nil {
 		return nil, err
@@ -2304,14 +2329,11 @@ func (c *Client) UpdateDashboard(id string, d *Dashboard) (*Dashboard, error) {
 }
 
 func (c *Client) DeleteDashboard(id string) error {
-	if c.APIVersion == APIV7 {
+	if c.APIVersion == APIV6 || c.APIVersion == APIV7 {
 		_, err := c.doRequest("DELETE", fmt.Sprintf("/api/views/%s", id), nil)
 		return err
 	}
 	path := fmt.Sprintf("/dashboards/%s", id)
-	if c.APIVersion == APIV6 {
-		path = fmt.Sprintf("/api/dashboards/%s", id)
-	}
 	_, err := c.doRequest("DELETE", path, nil)
 	return err
 }
@@ -2384,10 +2406,12 @@ type DashboardWidget struct {
 }
 
 func (c *Client) CreateDashboardWidget(dashboardID string, w *DashboardWidget) (*DashboardWidget, error) {
-	path := fmt.Sprintf("/dashboards/%s/widgets", dashboardID)
 	if c.APIVersion == APIV6 || c.APIVersion == APIV7 {
-		path = fmt.Sprintf("/api/dashboards/%s/widgets", dashboardID)
+		// Classic widget endpoints were removed together with legacy
+		// dashboards; widgets are part of the view state on these versions.
+		return nil, fmt.Errorf("classic dashboard widget API is not available on Graylog 6/7; widgets are managed as part of the dashboard view state")
 	}
+	path := fmt.Sprintf("/dashboards/%s/widgets", dashboardID)
 	resp, err := c.doRequest("POST", path, w)
 	if err != nil {
 		return nil, err
@@ -2593,17 +2617,17 @@ func (c *Client) CreateEventNotification(n *EventNotification) (*EventNotificati
 	if c.APIVersion == APIV6 || c.APIVersion == APIV7 {
 		path = "/api/events/notifications"
 	}
-	// Для v7 используется CreateEntityRequest с обёрткой entity
-	if c.APIVersion == APIV7 {
-		// entity без поля type (см. ошибку маппинга), только title/description/config
-		// Для v7 конфиг email чаще ожидает snake_case ключи — оставим как передано пользователем
+	// v6 and v7 reject a top-level "type" property ("Unable to map property
+	// type"); the discriminator lives inside config. v7 additionally wraps
+	// the payload into a CreateEntityRequest.
+	if c.APIVersion == APIV6 || c.APIVersion == APIV7 {
 		cfg := map[string]any{}
 		for k, v := range n.Config {
 			cfg[k] = v
 		}
-		// v7 requires the config JSON to carry its own type discriminator.
-		// For the legacy short "email" value map it to the full type name;
-		// otherwise reuse the resource-level type as-is (e.g. "http-notification-v1").
+		// The config JSON must carry its own type discriminator. For the
+		// legacy short "email" value map it to the full type name; otherwise
+		// reuse the resource-level type as-is (e.g. "http-notification-v1").
 		if _, ok := cfg["type"]; !ok {
 			switch {
 			case n.Type == "email":
@@ -2617,15 +2641,20 @@ func (c *Client) CreateEventNotification(n *EventNotification) (*EventNotificati
 			"description": n.Description,
 			"config":      cfg,
 		}
-		body := map[string]any{
-			// В Graylog 7 CreateEntityRequest для notifications ожидает только { entity, share_request? }
-			"entity": entity,
+		var body any = entity
+		if c.APIVersion == APIV7 {
+			// Graylog 7 CreateEntityRequest expects { entity, share_request? }
+			body = map[string]any{"entity": entity}
 		}
 		resp, err := c.doRequest("POST", path, body)
 		if err != nil {
-			// Фолбэк: попробовать без обёртки (некоторые сборки v7 принимают legacy форму)
+			// Fallback: try the other form; wrapped/unwrapped differs between builds
 			if strings.Contains(err.Error(), "400") || strings.Contains(err.Error(), "RequestError") {
-				if r2, e2 := c.doRequest("POST", path, n); e2 == nil {
+				var alt any = map[string]any{"entity": entity}
+				if c.APIVersion == APIV7 {
+					alt = entity
+				}
+				if r2, e2 := c.doRequest("POST", path, alt); e2 == nil {
 					var out2 EventNotification
 					_ = json.Unmarshal(r2, &out2)
 					return &out2, nil
@@ -2867,7 +2896,10 @@ type User struct {
 	Timezone         string   `json:"timezone,omitempty"`
 	SessionTimeoutMs int64    `json:"session_timeout_ms,omitempty"`
 	Disabled         bool     `json:"disabled,omitempty"`
-	Password         string   `json:"password,omitempty"`
+	// Graylog 6/7 report the state as account_status (enabled/disabled)
+	// instead of a boolean; used to derive Disabled when reading.
+	AccountStatus string `json:"account_status,omitempty"`
+	Password      string `json:"password,omitempty"`
 }
 
 func (c *Client) CreateUser(u *User) (*User, error) {
@@ -2919,6 +2951,9 @@ func (c *Client) GetUser(username string) (*User, error) {
 	}
 	var out User
 	_ = json.Unmarshal(resp, &out)
+	if out.AccountStatus != "" {
+		out.Disabled = out.AccountStatus != "enabled"
+	}
 	// Не возвращает пароль — и это нормально
 	out.Password = ""
 	return &out, nil
@@ -2927,46 +2962,66 @@ func (c *Client) GetUser(username string) (*User, error) {
 func (c *Client) UpdateUser(username string, u *User) (*User, error) {
 	// Унифицированный путь для всех версий
 	path := fmt.Sprintf("/api/users/%s", username)
-	// Для v7 многие операции Update требуют ObjectId в пути
-	if c.APIVersion == APIV7 {
-		// Попробуем получить ID пользователя и, если он имеется, использовать маршрут по ID
+	// Graylog 6/7: the update endpoint requires the user's ObjectId in the
+	// path (a username 500s with "hexString has 24 characters"), the name is
+	// modeled as snake_case first_name/last_name (camelCase keys are silently
+	// ignored), and the enabled/disabled state is changed only through the
+	// dedicated status endpoint (a "disabled" body property is ignored).
+	if c.APIVersion == APIV6 || c.APIVersion == APIV7 {
 		current, _ := c.GetUser(username)
+		id := username
 		if current != nil && current.ID != "" {
-			path = fmt.Sprintf("/api/users/%s", current.ID)
+			id = current.ID
 		}
 		payload := map[string]any{}
 		if u.FullName != "" {
-			// В некоторых сборках v7 используются camelCase ключи
-			payload["fullName"] = u.FullName
+			first, last := u.FullName, ""
+			if i := strings.Index(u.FullName, " "); i > 0 {
+				first, last = u.FullName[:i], u.FullName[i+1:]
+			}
+			payload["first_name"] = first
+			if last != "" {
+				payload["last_name"] = last
+			}
 		}
-		payload["disabled"] = u.Disabled
-		// роли и email обновляем, если заданы (некоторые сборки v7 принимают эти поля)
 		if len(u.Roles) > 0 {
 			payload["roles"] = u.Roles
 		}
 		if u.Email != "" {
 			payload["email"] = u.Email
 		}
-		if _, err := c.doRequest("PUT", path, payload); err != nil {
-			return nil, err
+		if u.Timezone != "" {
+			payload["timezone"] = u.Timezone
 		}
-		// Синхронизируем disabled явными эндпоинтами, если доступны
-		if current != nil && current.ID != "" {
-			if u.Disabled {
-				_, _ = c.doRequest("POST", fmt.Sprintf("/api/users/%s/disable", current.ID), nil)
-			} else {
-				_, _ = c.doRequest("POST", fmt.Sprintf("/api/users/%s/enable", current.ID), nil)
+		if u.SessionTimeoutMs != 0 {
+			payload["session_timeout_ms"] = u.SessionTimeoutMs
+		}
+		if len(payload) > 0 {
+			if _, err := c.doRequest("PUT", fmt.Sprintf("/api/users/%s", id), payload); err != nil {
+				return nil, err
 			}
 		}
-		// Фолбэк: попробуем PUT по username со snake_case, если изменения не применятся
-		_, _ = c.doRequest("PUT", fmt.Sprintf("/api/users/%s", username), map[string]any{
-			"full_name": u.FullName,
-			"disabled":  u.Disabled,
-		})
+		status := "enabled"
+		if u.Disabled {
+			status = "disabled"
+		}
+		if _, err := c.doRequest("PUT", fmt.Sprintf("/api/users/%s/status/%s", id, status), map[string]any{}); err != nil {
+			// Older builds expose POST /users/{id}/disable|enable instead
+			verb := "enable"
+			if u.Disabled {
+				verb = "disable"
+			}
+			_, _ = c.doRequest("POST", fmt.Sprintf("/api/users/%s/%s", id, verb), nil)
+		}
+		if u.Password != "" {
+			if _, err := c.doRequest("PUT", fmt.Sprintf("/api/users/%s/password", id), map[string]string{"password": u.Password}); err != nil {
+				return nil, err
+			}
+		}
 		// Вернуть актуальное состояние
 		return c.GetUser(username)
 	}
-	// Копия без пароля для основного апдейта (v5/v6)
+	// Копия без пароля для основного апдейта (v5)
 	body := *u
 	body.Password = ""
 	_, err := c.doRequest("PUT", path, &body)
