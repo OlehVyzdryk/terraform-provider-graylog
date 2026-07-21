@@ -24,8 +24,10 @@ func TestAccDashboardWidget_basic(t *testing.T) {
 			token = base64.StdEncoding.EncodeToString([]byte(token))
 		}
 		c := ic.New(url, token)
-		if c.APIVersion == ic.APIV5 || c.APIVersion == ic.APIV6 {
-			t.Skip("Dashboard CRUD is not supported by this Graylog version/image; skipping acceptance test")
+		// The classic widget API is gone entirely on Graylog 6/7 (widgets live
+		// inside the dashboard view state) — same gate as the integration twin.
+		if c.APIVersion == ic.APIV5 || c.APIVersion == ic.APIV6 || c.APIVersion == ic.APIV7 {
+			t.Skip("classic dashboard widget API is not available on this Graylog version/image; skipping acceptance test")
 		}
 	}
 

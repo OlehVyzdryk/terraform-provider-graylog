@@ -217,8 +217,12 @@ resource "graylog_index_set" "immutable" {
 				},
 			},
 			{
-				// Changing index_prefix must force replacement.
-				Config: baseConfig("acc-immutable-renamed", 2),
+				// Changing index_prefix must force replacement. The new prefix must
+				// not share a prefix with the old one in either direction: Graylog
+				// validates prefix conflicts with startsWith (and the old set/indices
+				// can still linger server-side while the replace is in flight), so
+				// "acc-immutable-renamed" gets rejected with 400 on some versions.
+				Config: baseConfig("acc-replaced-immutable", 2),
 				ConfigPlanChecks: resource.ConfigPlanChecks{
 					PreApply: []plancheck.PlanCheck{
 						plancheck.ExpectResourceAction("graylog_index_set.immutable", plancheck.ResourceActionReplace),
