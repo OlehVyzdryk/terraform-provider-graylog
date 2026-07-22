@@ -11,6 +11,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
@@ -36,7 +38,7 @@ func (r *eventNotificationResource) Schema(ctx context.Context, _ resource.Schem
 		Version:     1,
 		Description: "Manages Graylog Event Notification (email/http/slack/pagerduty).",
 		Attributes: map[string]schema.Attribute{
-			"id":          schema.StringAttribute{Computed: true, Description: "Notification ID"},
+			"id":          schema.StringAttribute{Computed: true, Description: "Notification ID", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"title":       schema.StringAttribute{Required: true, Description: "Title"},
 			"type":        schema.StringAttribute{Required: true, Description: "Type (email/http/slack/pagerduty)"},
 			"description": schema.StringAttribute{Optional: true, Description: "Description"},
@@ -129,6 +131,13 @@ func (r *eventNotificationResource) Update(ctx context.Context, req resource.Upd
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// The id is Computed and may be unknown in the plan; take it from state.
+	var state eventNotificationModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	data.ID = state.ID
 	// Capability gating: Event Notifications must be supported
 	caps := r.client.GetCapabilities()
 	resp.Diagnostics.Append(ensureFeature(ctx, r.client, caps.EventNotifications, "event_notifications", "try Graylog 6/7 or appropriate image")...)
@@ -151,7 +160,7 @@ func (r *eventNotificationResource) Update(ctx context.Context, req resource.Upd
 	}
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
-	_, err := r.client.WithContext(ctx).UpdateEventNotification(data.ID.ValueString(), &client.EventNotification{
+	_, err := r.client.WithContext(ctx).UpdateEventNotification(state.ID.ValueString(), &client.EventNotification{
 		Title:       data.Title.ValueString(),
 		Type:        data.Type.ValueString(),
 		Description: data.Description.ValueString(),

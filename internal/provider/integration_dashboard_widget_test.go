@@ -21,9 +21,12 @@ func TestIntegration_DashboardWidgetCRUD(t *testing.T) {
 	}
 	c := client.New(baseURL, token)
 
-	// Classic dashboards CRUD is not available on some Graylog versions/images
-	if c.APIVersion == client.APIV5 || c.APIVersion == client.APIV6 {
-		t.Skip("Dashboard CRUD is not supported by this Graylog version/image; skipping integration test")
+	// Classic dashboards CRUD is not available on some Graylog versions/images.
+	// On Graylog 6/7 the classic widget API is gone entirely: dashboards are
+	// views and widgets live inside the view state, which needs a dedicated
+	// views-based implementation (TODO).
+	if c.APIVersion == client.APIV5 || c.APIVersion == client.APIV6 || c.APIVersion == client.APIV7 {
+		t.Skip("classic dashboard widget API is not supported by this Graylog version/image; skipping integration test")
 	}
 
 	// Prepare dashboard fixture

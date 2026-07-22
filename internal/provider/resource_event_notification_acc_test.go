@@ -57,6 +57,11 @@ resource "graylog_event_notification" "n" {
 				ResourceName:      "graylog_event_notification.n",
 				ImportState:       true,
 				ImportStateVerify: true,
+				// The server enriches the stored config with ~20 defaulted keys
+				// (bcc/cc/lookup_*/single_email/...) and a defaulted description,
+				// so the imported state can never equal the user's minimal form —
+				// the known server-side enrichment limitation documented in the PR.
+				ImportStateVerifyIgnore: []string{"config", "description"},
 			},
 		},
 	})

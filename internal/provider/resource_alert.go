@@ -20,14 +20,23 @@ import (
 type alertResource struct{ client *client.Client }
 
 type alertModel struct {
-	ID              types.String   `tfsdk:"id"`
-	Title           types.String   `tfsdk:"title"`
-	Description     types.String   `tfsdk:"description"`
-	Priority        types.Int64    `tfsdk:"priority"`
-	Alert           types.Bool     `tfsdk:"alert"`
-	Config          types.String   `tfsdk:"config"`
-	NotificationIDs []types.String `tfsdk:"notification_ids"`
-	Timeouts        timeouts.Value `tfsdk:"timeouts"`
+	ID                   types.String                    `tfsdk:"id"`
+	Title                types.String                    `tfsdk:"title"`
+	Description          types.String                    `tfsdk:"description"`
+	Priority             types.Int64                     `tfsdk:"priority"`
+	Alert                types.Bool                      `tfsdk:"alert"`
+	Config               types.String                    `tfsdk:"config"`
+	NotificationIDs      []types.String                  `tfsdk:"notification_ids"`
+	FieldSpec            types.String                    `tfsdk:"field_spec"`
+	KeySpec              []types.String                  `tfsdk:"key_spec"`
+	NotificationSettings *alertNotificationSettingsModel `tfsdk:"notification_settings"`
+	Timeouts             timeouts.Value                  `tfsdk:"timeouts"`
+}
+
+// alertNotificationSettingsModel represents grace period / backlog settings
+type alertNotificationSettingsModel struct {
+	GracePeriodMs types.Int64 `tfsdk:"grace_period_ms"`
+	BacklogSize   types.Int64 `tfsdk:"backlog_size"`
 }
 
 // --- Typed Event Definitions (V1): minimal threshold support ---
@@ -105,7 +114,17 @@ func (r *alertResource) Schema(ctx context.Context, _ resource.SchemaRequest, re
 			// JSON-encoded free-form object remains as an escape-hatch
 			"config":           schema.StringAttribute{Optional: true, Description: "JSON-encoded event configuration (free-form object)."},
 			"notification_ids": schema.ListAttribute{Optional: true, ElementType: types.StringType, Description: "Notification IDs to trigger"},
-			"timeouts":         timeouts.Attributes(ctx, timeouts.Opts{Create: true, Update: true, Delete: true}),
+			"field_spec":       schema.StringAttribute{Optional: true, Description: "JSON-encoded custom event field definitions (field name -> {data_type, providers})."},
+			"key_spec":         schema.ListAttribute{Optional: true, ElementType: types.StringType, Description: "Event key fields; must reference fields defined in field_spec."},
+			"notification_settings": schema.SingleNestedAttribute{
+				Optional:    true,
+				Description: "Notification settings for the event definition.",
+				Attributes: map[string]schema.Attribute{
+					"grace_period_ms": schema.Int64Attribute{Optional: true, Description: "Grace period between notifications in milliseconds"},
+					"backlog_size":    schema.Int64Attribute{Optional: true, Description: "Number of backlog messages to include in notifications"},
+				},
+			},
+			"timeouts": timeouts.Attributes(ctx, timeouts.Opts{Create: true, Update: true, Delete: true}),
 		},
 		Blocks: map[string]schema.Block{
 			// Typed threshold block (minimal viable shape for 'threshold-v1')
@@ -218,6 +237,30 @@ func (r *alertResource) Configure(_ context.Context, req resource.ConfigureReque
 	r.client = req.ProviderData.(*client.Client)
 }
 
+// buildEventDefinitionExtras converts field_spec/key_spec/notification_settings
+// model attributes into client values.
+func buildEventDefinitionExtras(dataV2 *alertModelV2, diags *diag.Diagnostics) (map[string]interface{}, []string, map[string]interface{}) {
+	var fieldSpec map[string]interface{}
+	if !dataV2.FieldSpec.IsNull() && dataV2.FieldSpec.ValueString() != "" {
+		if err := json.Unmarshal([]byte(dataV2.FieldSpec.ValueString()), &fieldSpec); err != nil {
+			diags.AddAttributeError(path.Root("field_spec"), "Invalid JSON", err.Error())
+			return nil, nil, nil
+		}
+	}
+	var keySpec []string
+	for _, v := range dataV2.KeySpec {
+		keySpec = append(keySpec, v.ValueString())
+	}
+	var notifSettings map[string]interface{}
+	if dataV2.NotificationSettings != nil {
+		notifSettings = map[string]interface{}{
+			"grace_period_ms": dataV2.NotificationSettings.GracePeriodMs.ValueInt64(),
+			"backlog_size":    dataV2.NotificationSettings.BacklogSize.ValueInt64(),
+		}
+	}
+	return fieldSpec, keySpec, notifSettings
+}
+
 func (r *alertResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var dataV2 alertModelV2
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &dataV2)...)
@@ -250,14 +293,21 @@ func (r *alertResource) Create(ctx context.Context, req resource.CreateRequest, 
 	for _, v := range dataV2.NotificationIDs {
 		nids = append(nids, v.ValueString())
 	}
+	fieldSpec, keySpec, notifSettings := buildEventDefinitionExtras(&dataV2, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	created, err := r.client.WithContext(ctx).CreateEventDefinition(&client.EventDefinition{
-		Title:           dataV2.Title.ValueString(),
-		Description:     dataV2.Description.ValueString(),
-		Priority:        int(dataV2.Priority.ValueInt64()),
-		Alert:           dataV2.Alert.ValueBool(),
-		Config:          cfg,
-		NotificationIDs: nids,
+		Title:                dataV2.Title.ValueString(),
+		Description:          dataV2.Description.ValueString(),
+		Priority:             int(dataV2.Priority.ValueInt64()),
+		Alert:                dataV2.Alert.ValueBool(),
+		Config:               cfg,
+		NotificationIDs:      nids,
+		FieldSpec:            fieldSpec,
+		KeySpec:              keySpec,
+		NotificationSettings: notifSettings,
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating alert", err.Error())
@@ -306,6 +356,32 @@ func (r *alertResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		tv = append(tv, types.StringValue(id))
 	}
 	dataV2.NotificationIDs = tv
+	// Read extras back only when they are tracked in state, so users of the
+	// free-form config who never set them do not get spurious diffs.
+	if !dataV2.FieldSpec.IsNull() && ed.FieldSpec != nil {
+		if b, err := json.Marshal(ed.FieldSpec); err == nil {
+			if s, err2 := CanonicalizeJSONFromString(string(b)); err2 == nil {
+				dataV2.FieldSpec = types.StringValue(s)
+			} else {
+				dataV2.FieldSpec = types.StringValue(string(b))
+			}
+		}
+	}
+	if dataV2.KeySpec != nil {
+		var ks []types.String
+		for _, k := range ed.KeySpec {
+			ks = append(ks, types.StringValue(k))
+		}
+		dataV2.KeySpec = ks
+	}
+	if dataV2.NotificationSettings != nil && ed.NotificationSettings != nil {
+		if v, ok := ed.NotificationSettings["grace_period_ms"].(float64); ok {
+			dataV2.NotificationSettings.GracePeriodMs = types.Int64Value(int64(v))
+		}
+		if v, ok := ed.NotificationSettings["backlog_size"].(float64); ok {
+			dataV2.NotificationSettings.BacklogSize = types.Int64Value(int64(v))
+		}
+	}
 	// Try to populate typed blocks from config if type matches, but only
 	// when the corresponding typed block was present in state/plan to avoid
 	// surprising drift after imports that use raw config.
@@ -348,14 +424,28 @@ func (r *alertResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	for _, v := range dataV2.NotificationIDs {
 		nids = append(nids, v.ValueString())
 	}
+	fieldSpec, keySpec, notifSettings := buildEventDefinitionExtras(&dataV2, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// The id is Computed and may be unknown in the plan; take it from state.
+	var stateV2 alertModelV2
+	resp.Diagnostics.Append(req.State.Get(ctx, &stateV2)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	dataV2.ID = stateV2.ID
 
-	_, err := r.client.WithContext(ctx).UpdateEventDefinition(dataV2.ID.ValueString(), &client.EventDefinition{
-		Title:           dataV2.Title.ValueString(),
-		Description:     dataV2.Description.ValueString(),
-		Priority:        int(dataV2.Priority.ValueInt64()),
-		Alert:           dataV2.Alert.ValueBool(),
-		Config:          cfg,
-		NotificationIDs: nids,
+	_, err := r.client.WithContext(ctx).UpdateEventDefinition(stateV2.ID.ValueString(), &client.EventDefinition{
+		Title:                dataV2.Title.ValueString(),
+		Description:          dataV2.Description.ValueString(),
+		Priority:             int(dataV2.Priority.ValueInt64()),
+		Alert:                dataV2.Alert.ValueBool(),
+		Config:               cfg,
+		NotificationIDs:      nids,
+		FieldSpec:            fieldSpec,
+		KeySpec:              keySpec,
+		NotificationSettings: notifSettings,
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating alert", err.Error())

@@ -34,8 +34,6 @@ func TestAccDashboard_basic(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				// Разные версии GL могут возвращать расширенные поля — разрешаем непустой план
-				ExpectNonEmptyPlan: true,
 				Config: testAccProviderConfig() + `
 resource "graylog_dashboard" "d" {
   title       = "acc-dashboard"
