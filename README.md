@@ -5,6 +5,7 @@
 [![Terraform Registry](https://img.shields.io/badge/terraform-registry-blue)](https://registry.terraform.io/providers/Ultrafenrir/graylog)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/Ultrafenrir/terraform-provider-graylog)](https://github.com/Ultrafenrir/terraform-provider-graylog)
 [![Tests](https://github.com/Ultrafenrir/terraform-provider-graylog/workflows/CI/badge.svg)](https://github.com/Ultrafenrir/terraform-provider-graylog/actions)
+[![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
 
 ## Why This Provider?
 
@@ -66,6 +67,12 @@ provider "graylog" {
 ```
 
 See the `examples/` directory for standalone, copy‑pasteable snippets for each resource type.
+
+## License
+
+This project is licensed under the [Mozilla Public License 2.0](LICENSE)
+(`MPL-2.0`). Changes to MPL-licensed source files must remain available under
+the MPL, while the provider may be combined with code under other licenses.
 
 ## Quick Start
 
@@ -300,7 +307,7 @@ CI runs integration, acceptance, and migration tests against all listed versions
 
 ### Canonical JSON and Import UX
 
-- Canonical JSON serialization is applied to JSON‑like attributes to stabilize plans (avoid order‑only diffs). It is used for `graylog_event_notification.config`, `graylog_input.configuration`, and `graylog_input.extractors`.
+- Canonical JSON serialization is applied to JSON‑like attributes to stabilize plans (avoid order‑only diffs). It is used for `graylog_event_notification.config`, `graylog_input.configuration`, and the `extractor_config`/`converter.config` fields in `graylog_input.extractor` blocks.
 - Import UX supports readable keys in addition to IDs:
   - `graylog_user` by `username`, `graylog_role` by `name`.
   - `graylog_stream`/`graylog_dashboard` by exact `title` or by ID (UUID/24‑hex). Use the explicit `title:` prefix to avoid ambiguity.

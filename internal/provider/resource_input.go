@@ -346,6 +346,8 @@ func extractorModelToClient(m inputExtractorModel) (*client.Extractor, diag.Diag
 		CursorStrategy: m.CursorStrategy.ValueString(),
 		ConditionType:  m.ConditionType.ValueString(),
 		ConditionValue: m.ConditionValue.ValueString(),
+		// Graylog requires an explicit JSON array even when no converters are configured.
+		Converters: make([]client.ExtractorConverter, 0),
 	}
 	if !m.Order.IsNull() && !m.Order.IsUnknown() {
 		ex.Order = int(m.Order.ValueInt64())

@@ -328,33 +328,35 @@ resource "graylog_stream_permission" "example" {
 
 **Symptom:** Extractors fail to parse, logs show errors.
 
-**Cause:** Invalid extractor JSON format.
+**Cause:** Invalid extractor block fields or extractor-specific configuration.
 
 **Solution:**
 ```hcl
 resource "graylog_input" "syslog" {
   # ...
 
-  extractors = jsonencode([
-    {
-      title       = "Parse timestamp"
-      type        = "GROK"
-      cursor_strategy = "COPY"
-      source_field    = "message"
-      target_field    = "timestamp"
-      extractor_config = {
-        grok_pattern = "%{TIMESTAMP_ISO8601:timestamp}"
-      }
-      condition_type  = "NONE"
-      condition_value = ""
-      order          = 0
-    }
-  ])
+  extractor {
+    title           = "Parse timestamp"
+    extractor_type  = "grok"
+    cursor_strategy = "copy"
+    source_field    = "message"
+    target_field    = "timestamp"
+
+    extractor_config = jsonencode({
+      grok_pattern = "%{TIMESTAMP_ISO8601:timestamp}"
+    })
+
+    condition_type = "none"
+    order          = 0
+  }
 }
 ```
 
+Use `extractor_type`, not `type`. When no `converter` blocks are configured, the
+provider sends the required `converters: []` to Graylog automatically.
+
 **Debug:**
-1. **Validate JSON:**
+1. **Validate extractor configuration JSON:**
    ```bash
    echo 'your_json' | jq .
    ```

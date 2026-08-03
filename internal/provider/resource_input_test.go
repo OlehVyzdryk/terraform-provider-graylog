@@ -134,6 +134,27 @@ func TestExtractorClientToModel_EmptyOptionalFieldsBecomeNull(t *testing.T) {
 	}
 }
 
+func TestExtractorModelToClient_DefaultsConvertersToEmptyList(t *testing.T) {
+	m := inputExtractorModel{
+		Title:          types.StringValue("extract"),
+		ExtractorType:  types.StringValue("grok"),
+		SourceField:    types.StringValue("message"),
+		CursorStrategy: types.StringValue("copy"),
+		ConditionType:  types.StringValue("none"),
+	}
+
+	ex, diags := extractorModelToClient(m)
+	if diags.HasError() {
+		t.Fatalf("extractorModelToClient: %v", diags)
+	}
+	if ex.Converters == nil {
+		t.Fatal("expected converters to default to an empty, non-nil list")
+	}
+	if len(ex.Converters) != 0 {
+		t.Fatalf("expected no converters, got %+v", ex.Converters)
+	}
+}
+
 func TestInputResource_UpgradeStateV6ToV7(t *testing.T) {
 	ctx := context.Background()
 	r := &inputResource{}
