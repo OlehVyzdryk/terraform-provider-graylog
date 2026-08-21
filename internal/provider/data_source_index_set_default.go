@@ -12,14 +12,14 @@ import (
 type indexSetDefaultDataSource struct{ client *client.Client }
 
 type indexSetDefaultDSModel struct {
-	ID                types.String `tfsdk:"id"`
-	Title             types.String `tfsdk:"title"`
-	Description       types.String `tfsdk:"description"`
-	IndexPrefix       types.String `tfsdk:"index_prefix"`
+	ID            types.String `tfsdk:"id"`
+	Title         types.String `tfsdk:"title"`
+	Description   types.String `tfsdk:"description"`
+	IndexPrefix   types.String `tfsdk:"index_prefix"`
 	Shards        types.Int64  `tfsdk:"shards"`
 	Replicas      types.Int64  `tfsdk:"replicas"`
 	IndexAnalyzer types.String `tfsdk:"index_analyzer"`
-	Default           types.Bool   `tfsdk:"default"`
+	Default       types.Bool   `tfsdk:"default"`
 }
 
 func NewIndexSetDefaultDataSource() datasource.DataSource { return &indexSetDefaultDataSource{} }
@@ -32,14 +32,14 @@ func (d *indexSetDefaultDataSource) Schema(_ context.Context, _ datasource.Schem
 	resp.Schema = schema.Schema{
 		Description: "Fetches the default (writable) Graylog index set.",
 		Attributes: map[string]schema.Attribute{
-			"id":            schema.StringAttribute{Computed: true, Description: "The unique identifier of the default index set"},
-			"title":         schema.StringAttribute{Computed: true},
-			"description":   schema.StringAttribute{Computed: true},
-			"index_prefix":  schema.StringAttribute{Computed: true},
-			"shards":        schema.Int64Attribute{Computed: true},
-			"replicas":      schema.Int64Attribute{Computed: true},
+			"id":             schema.StringAttribute{Computed: true, Description: "The unique identifier of the default index set"},
+			"title":          schema.StringAttribute{Computed: true},
+			"description":    schema.StringAttribute{Computed: true},
+			"index_prefix":   schema.StringAttribute{Computed: true},
+			"shards":         schema.Int64Attribute{Computed: true},
+			"replicas":       schema.Int64Attribute{Computed: true},
 			"index_analyzer": schema.StringAttribute{Computed: true},
-			"default":       schema.BoolAttribute{Computed: true},
+			"default":        schema.BoolAttribute{Computed: true},
 		},
 	}
 }
