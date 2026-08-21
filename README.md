@@ -201,7 +201,7 @@ Combine with LDAP sync for complete automated RBAC.
 
 ## Supported Resources & Data Sources
 
-### Resources (15)
+### Resources (19)
 **Core Infrastructure:**
 - `graylog_stream` — Streams with routing rules
 - `graylog_input` — Inputs (Kafka, Syslog, GELF, Beats, etc.) with extractors
@@ -225,6 +225,11 @@ Combine with LDAP sync for complete automated RBAC.
 
 **Backups:**
 - `graylog_opensearch_snapshot_repository` — OpenSearch snapshot repos (FS/S3) ⭐
+
+**Enrichment:**
+- `graylog_lookup_cache` — Lookup caches ⭐
+- `graylog_lookup_adapter` — Lookup data adapters ⭐
+- `graylog_lookup_table` — Lookup tables resolved by pipeline rules ⭐
 
 ### Data Sources (13)
 **Lookups:**

@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -3148,4 +3149,197 @@ func (c *Client) ListUsers() ([]User, error) {
 		}
 	}
 	return nil, errors.New("unexpected users response format")
+}
+
+// ---- Lookup Tables ----
+
+// LookupCache is a lookup cache. Config is kept as raw JSON: each cache type
+// carries its own field set, and decoding through map[string]any would round
+// numbers to float64 and re-encode them in scientific notation.
+type LookupCache struct {
+	ID          string          `json:"id,omitempty"`
+	Name        string          `json:"name"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
+	Config      json.RawMessage `json:"config"`
+}
+
+// LookupAdapter is a lookup data adapter. See LookupCache for why Config is
+// raw JSON.
+type LookupAdapter struct {
+	ID          string          `json:"id,omitempty"`
+	Name        string          `json:"name"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
+	Config      json.RawMessage `json:"config"`
+}
+
+// LookupTable binds a cache and a data adapter under the name that pipeline
+// rules resolve with lookup()/lookup_value().
+type LookupTable struct {
+	ID                     string `json:"id,omitempty"`
+	Name                   string `json:"name"`
+	Title                  string `json:"title"`
+	Description            string `json:"description"`
+	CacheID                string `json:"cache_id"`
+	DataAdapterID          string `json:"data_adapter_id"`
+	DefaultSingleValue     string `json:"default_single_value"`
+	DefaultSingleValueType string `json:"default_single_value_type"`
+	DefaultMultiValue      string `json:"default_multi_value"`
+	DefaultMultiValueType  string `json:"default_multi_value_type"`
+}
+
+func (c *Client) CreateLookupCache(cache *LookupCache) (*LookupCache, error) {
+	resp, err := c.doRequest("POST", "/api/system/lookup/caches", cache)
+	if err != nil {
+		return nil, err
+	}
+	var out LookupCache
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode lookup cache: %w", err)
+	}
+	return &out, nil
+}
+
+// GetLookupCache accepts either the id or the name.
+func (c *Client) GetLookupCache(idOrName string) (*LookupCache, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("/api/system/lookup/caches/%s", url.PathEscape(idOrName)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var out LookupCache
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode lookup cache: %w", err)
+	}
+	return &out, nil
+}
+
+// UpdateLookupCache requires the id both in the path and in the body; Graylog
+// rejects a mismatch with "URL parameter does not match parameter in request
+// body".
+func (c *Client) UpdateLookupCache(id string, cache *LookupCache) (*LookupCache, error) {
+	body := *cache
+	body.ID = id
+	resp, err := c.doRequest("PUT", fmt.Sprintf("/api/system/lookup/caches/%s", url.PathEscape(id)), &body)
+	if err != nil {
+		return nil, err
+	}
+	var out LookupCache
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode lookup cache: %w", err)
+	}
+	return &out, nil
+}
+
+func (c *Client) DeleteLookupCache(id string) error {
+	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/system/lookup/caches/%s", url.PathEscape(id)), nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (c *Client) CreateLookupAdapter(adapter *LookupAdapter) (*LookupAdapter, error) {
+	resp, err := c.doRequest("POST", "/api/system/lookup/adapters", adapter)
+	if err != nil {
+		return nil, err
+	}
+	var out LookupAdapter
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode lookup adapter: %w", err)
+	}
+	return &out, nil
+}
+
+// GetLookupAdapter accepts either the id or the name.
+func (c *Client) GetLookupAdapter(idOrName string) (*LookupAdapter, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("/api/system/lookup/adapters/%s", url.PathEscape(idOrName)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var out LookupAdapter
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode lookup adapter: %w", err)
+	}
+	return &out, nil
+}
+
+// UpdateLookupAdapter requires the id in the body as well as the path.
+func (c *Client) UpdateLookupAdapter(id string, adapter *LookupAdapter) (*LookupAdapter, error) {
+	body := *adapter
+	body.ID = id
+	resp, err := c.doRequest("PUT", fmt.Sprintf("/api/system/lookup/adapters/%s", url.PathEscape(id)), &body)
+	if err != nil {
+		return nil, err
+	}
+	var out LookupAdapter
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode lookup adapter: %w", err)
+	}
+	return &out, nil
+}
+
+func (c *Client) DeleteLookupAdapter(id string) error {
+	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/system/lookup/adapters/%s", url.PathEscape(id)), nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (c *Client) CreateLookupTable(table *LookupTable) (*LookupTable, error) {
+	resp, err := c.doRequest("POST", "/api/system/lookup/tables", table)
+	if err != nil {
+		return nil, err
+	}
+	var out LookupTable
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode lookup table: %w", err)
+	}
+	return &out, nil
+}
+
+// GetLookupTable accepts either the id or the name. Unlike the cache and
+// adapter endpoints, which return the object directly, the tables endpoint
+// answers with a paginated envelope even when addressed by id — decoding it
+// as a bare object silently yields an empty table.
+func (c *Client) GetLookupTable(idOrName string) (*LookupTable, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("/api/system/lookup/tables/%s", url.PathEscape(idOrName)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var envelope struct {
+		LookupTables []LookupTable `json:"lookup_tables"`
+	}
+	if err := json.Unmarshal(resp, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to decode lookup table: %w", err)
+	}
+	if len(envelope.LookupTables) == 0 {
+		return nil, ErrNotFound
+	}
+	out := envelope.LookupTables[0]
+	return &out, nil
+}
+
+// UpdateLookupTable requires the id in the body as well as the path.
+func (c *Client) UpdateLookupTable(id string, table *LookupTable) (*LookupTable, error) {
+	body := *table
+	body.ID = id
+	resp, err := c.doRequest("PUT", fmt.Sprintf("/api/system/lookup/tables/%s", url.PathEscape(id)), &body)
+	if err != nil {
+		return nil, err
+	}
+	var out LookupTable
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode lookup table: %w", err)
+	}
+	return &out, nil
+}
+
+func (c *Client) DeleteLookupTable(id string) error {
+	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/system/lookup/tables/%s", url.PathEscape(id)), nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
