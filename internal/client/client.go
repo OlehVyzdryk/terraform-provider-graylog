@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -3148,4 +3149,56 @@ func (c *Client) ListUsers() ([]User, error) {
 		}
 	}
 	return nil, errors.New("unexpected users response format")
+}
+
+// ---- Cluster Config ----
+
+// clusterConfigPath builds the endpoint for a cluster configuration class.
+// The class name is a fully qualified Java class and is URL-escaped so that
+// nothing in it can alter the request path.
+func clusterConfigPath(class string) string {
+	return fmt.Sprintf("/api/system/cluster_config/%s", url.PathEscape(class))
+}
+
+// GetClusterConfig returns the raw JSON document Graylog stores under the
+// given cluster configuration class. A class that has never been written
+// yields ErrNotFound: depending on the version Graylog answers either 404 or
+// 200 with an empty body, so both are normalized here.
+func (c *Client) GetClusterConfig(class string) (json.RawMessage, error) {
+	resp, err := c.doRequest("GET", clusterConfigPath(class), nil)
+	if err != nil {
+		return nil, err
+	}
+	trimmed := bytes.TrimSpace(resp)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil, ErrNotFound
+	}
+	return json.RawMessage(trimmed), nil
+}
+
+// UpdateClusterConfig writes the document for a cluster configuration class,
+// creating it when absent. Graylog exposes no separate create endpoint; PUT
+// is an upsert.
+func (c *Client) UpdateClusterConfig(class string, config json.RawMessage) (json.RawMessage, error) {
+	resp, err := c.doRequest("PUT", clusterConfigPath(class), config)
+	if err != nil {
+		return nil, err
+	}
+	trimmed := bytes.TrimSpace(resp)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		// Some classes answer 202/204 with no body; the caller falls back to
+		// the document it just sent.
+		return nil, nil
+	}
+	return json.RawMessage(trimmed), nil
+}
+
+// DeleteClusterConfig removes the stored document for a class, which makes
+// Graylog fall back to the default compiled into the server.
+func (c *Client) DeleteClusterConfig(class string) error {
+	_, err := c.doRequest("DELETE", clusterConfigPath(class), nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
