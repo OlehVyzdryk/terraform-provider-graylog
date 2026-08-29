@@ -4,6 +4,7 @@ package provider
 
 import (
 	"encoding/base64"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -19,6 +20,26 @@ func getenv(k, def string) string {
 }
 
 // TestIntegration_IndexSetCRUD runs against a real Graylog instance started via docker-compose
+// getIndexSetEventually retries a not-found read for a short while.
+//
+// A GET issued immediately after a successful create can transiently 404 —
+// the resource itself already compensates for this (see the retry loop in
+// resource_index_set.go). It shows up most often on a cold Graylog 7, which
+// is exactly what CI starts, so without the same tolerance here the test
+// fails on the timing rather than on behaviour.
+func getIndexSetEventually(t *testing.T, c *client.Client, id string) *client.IndexSet {
+	t.Helper()
+	is, err := c.GetIndexSet(id)
+	for attempt := 0; attempt < 5 && errors.Is(err, client.ErrNotFound); attempt++ {
+		time.Sleep(300 * time.Millisecond)
+		is, err = c.GetIndexSet(id)
+	}
+	if err != nil {
+		t.Fatalf("GetIndexSet error: %v", err)
+	}
+	return is
+}
+
 func TestIntegration_IndexSetCRUD(t *testing.T) {
 	baseURL := os.Getenv("URL")
 	token := os.Getenv("TOKEN")
@@ -62,10 +83,7 @@ func TestIntegration_IndexSetCRUD(t *testing.T) {
 	}
 
 	// Get
-	got, err := c.GetIndexSet(created.ID)
-	if err != nil {
-		t.Fatalf("GetIndexSet error: %v", err)
-	}
+	got := getIndexSetEventually(t, c, created.ID)
 	if got.IndexPrefix == "" || got.Title == "" {
 		t.Fatalf("unexpected GetIndexSet result: %+v", got)
 	}
@@ -83,16 +101,19 @@ func TestIntegration_IndexSetCRUD(t *testing.T) {
 	if upd.Title != "tf-prov-itest-upd" {
 		t.Fatalf("title was not updated: %+v", upd)
 	}
-	after, err := c.GetIndexSet(got.ID)
-	if err != nil {
-		t.Fatalf("GetIndexSet after update error: %v", err)
-	}
+	after := getIndexSetEventually(t, c, got.ID)
 	if after.FieldTypeRefreshInterval != 9000 {
 		t.Fatalf("field_type_refresh_interval was not persisted on update: want 9000, got %d", after.FieldTypeRefreshInterval)
 	}
 
-	// Delete
-	if err := c.DeleteIndexSet(created.ID); err != nil {
+	// Delete. The same transient not-found applies here, and an index set
+	// that is already gone is the desired end state anyway.
+	err = c.DeleteIndexSet(created.ID)
+	for attempt := 0; attempt < 5 && errors.Is(err, client.ErrNotFound); attempt++ {
+		time.Sleep(300 * time.Millisecond)
+		err = c.DeleteIndexSet(created.ID)
+	}
+	if err != nil && !errors.Is(err, client.ErrNotFound) {
 		t.Fatalf("DeleteIndexSet error: %v", err)
 	}
 }
