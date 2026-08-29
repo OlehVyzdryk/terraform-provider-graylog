@@ -178,6 +178,7 @@ func (p *graylogProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewRoleResource,
 		NewUserResource,
 		NewOpenSearchSnapshotRepositoryResource,
+		NewClusterConfigResource,
 	}
 }
 
