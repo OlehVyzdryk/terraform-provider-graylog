@@ -179,6 +179,9 @@ func (p *graylogProvider) Resources(_ context.Context) []func() resource.Resourc
 		NewUserResource,
 		NewOpenSearchSnapshotRepositoryResource,
 		NewClusterConfigResource,
+		NewLookupCacheResource,
+		NewLookupAdapterResource,
+		NewLookupTableResource,
 	}
 }
 
