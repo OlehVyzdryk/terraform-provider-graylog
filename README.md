@@ -201,7 +201,7 @@ Combine with LDAP sync for complete automated RBAC.
 
 ## Supported Resources & Data Sources
 
-### Resources (20)
+### Resources (22)
 **Core Infrastructure:**
 - `graylog_stream` — Streams with routing rules
 - `graylog_input` — Inputs (Kafka, Syslog, GELF, Beats, etc.) with extractors
@@ -214,7 +214,9 @@ Combine with LDAP sync for complete automated RBAC.
 **Security & Governance:**
 - `graylog_user` — User management
 - `graylog_role` — Role management
-- `graylog_ldap_setting` — LDAP configuration
+- `graylog_ldap_setting` — LDAP configuration (legacy pre-4.0 endpoint)
+- `graylog_auth_backend` — LDAP / Active Directory authentication backends ⭐
+- `graylog_auth_backend_activation` — Cluster-wide active backend selection ⭐
 - `graylog_stream_permission` — Stream RBAC ⭐
 - `graylog_dashboard_permission` — Dashboard RBAC
 - `graylog_stream_output_binding` — Stream-to-output bindings

@@ -3395,3 +3395,106 @@ func (c *Client) DeleteLookupTable(id string) error {
 	}
 	return err
 }
+
+// ---- Authentication Service Backends ----
+
+// AuthBackend is an authentication service backend (LDAP or Active
+// Directory). Config is raw JSON because the field set depends on the backend
+// type, and because one of its fields never round-trips: Graylog echoes
+// system_user_password as the object {"is_set": true} rather than the value.
+type AuthBackend struct {
+	ID           string          `json:"id,omitempty"`
+	Title        string          `json:"title"`
+	Description  string          `json:"description"`
+	DefaultRoles []string        `json:"default_roles"`
+	Config       json.RawMessage `json:"config"`
+}
+
+// authBackendEnvelope wraps every single-backend response.
+type authBackendEnvelope struct {
+	Backend AuthBackend `json:"backend"`
+}
+
+func (c *Client) CreateAuthBackend(backend *AuthBackend) (*AuthBackend, error) {
+	resp, err := c.doRequest("POST", "/api/system/authentication/services/backends", backend)
+	if err != nil {
+		return nil, err
+	}
+	var out authBackendEnvelope
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode authentication backend: %w", err)
+	}
+	return &out.Backend, nil
+}
+
+// GetAuthBackend returns a backend by ID. The response is wrapped in a
+// "backend" object; decoding it as a bare struct yields an empty backend and
+// no error.
+func (c *Client) GetAuthBackend(id string) (*AuthBackend, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("/api/system/authentication/services/backends/%s", url.PathEscape(id)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var out authBackendEnvelope
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode authentication backend: %w", err)
+	}
+	if out.Backend.ID == "" {
+		return nil, ErrNotFound
+	}
+	return &out.Backend, nil
+}
+
+// UpdateAuthBackend requires the id in the body as well as the path. Omitting
+// system_user_password from the config keeps the stored one, which is how a
+// configuration that never carried the secret can still be updated.
+func (c *Client) UpdateAuthBackend(id string, backend *AuthBackend) (*AuthBackend, error) {
+	body := *backend
+	body.ID = id
+	resp, err := c.doRequest("PUT", fmt.Sprintf("/api/system/authentication/services/backends/%s", url.PathEscape(id)), &body)
+	if err != nil {
+		return nil, err
+	}
+	var out authBackendEnvelope
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return nil, fmt.Errorf("failed to decode authentication backend: %w", err)
+	}
+	return &out.Backend, nil
+}
+
+func (c *Client) DeleteAuthBackend(id string) error {
+	_, err := c.doRequest("DELETE", fmt.Sprintf("/api/system/authentication/services/backends/%s", url.PathEscape(id)), nil)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+// GetActiveAuthBackend returns the ID of the cluster's active authentication
+// backend, or "" when local authentication only is in effect.
+func (c *Client) GetActiveAuthBackend() (string, error) {
+	resp, err := c.doRequest("GET", "/api/system/authentication/services/configuration", nil)
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		Configuration struct {
+			ActiveBackend string `json:"active_backend"`
+		} `json:"configuration"`
+	}
+	if err := json.Unmarshal(resp, &out); err != nil {
+		return "", fmt.Errorf("failed to decode authentication configuration: %w", err)
+	}
+	return out.Configuration.ActiveBackend, nil
+}
+
+// SetActiveAuthBackend activates a backend cluster-wide, or clears the
+// selection when id is empty. The endpoint only accepts POST; PUT answers 405.
+func (c *Client) SetActiveAuthBackend(id string) error {
+	body := map[string]any{"active_backend": nil}
+	if id != "" {
+		body["active_backend"] = id
+	}
+	_, err := c.doRequest("POST", "/api/system/authentication/services/configuration", body)
+	return err
+}

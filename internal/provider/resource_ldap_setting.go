@@ -42,7 +42,8 @@ func (r *ldapSettingResource) Metadata(_ context.Context, _ resource.MetadataReq
 
 func (r *ldapSettingResource) Schema(ctx context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages Graylog global LDAP settings (singleton).",
+		DeprecationMessage: "graylog_ldap_setting targets the pre-4.0 /system/ldap/settings endpoint, which Graylog no longer serves. Use graylog_auth_backend together with graylog_auth_backend_activation instead.",
+		Description:        "Manages Graylog global LDAP settings (singleton).",
 		Attributes: map[string]schema.Attribute{
 			"id":                       schema.StringAttribute{Computed: true, Description: "Fixed ID for singleton (always 'ldap')"},
 			"enabled":                  schema.BoolAttribute{Optional: true, Description: "Enable LDAP authentication"},

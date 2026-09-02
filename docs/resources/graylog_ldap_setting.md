@@ -7,6 +7,8 @@ description: |-
 
 # graylog_ldap_setting
 
+> **Deprecated.** This resource targets the pre-4.0 `/system/ldap/settings` endpoint, which Graylog no longer serves. Use [graylog_auth_backend](graylog_auth_backend) together with [graylog_auth_backend_activation](graylog_auth_backend_activation) instead.
+
 Ресурс управляет глобальными настройками LDAP в Graylog. Это одиночный ресурс (singleton).
 
 ## Example Usage
